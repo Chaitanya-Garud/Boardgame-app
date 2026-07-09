@@ -387,3 +387,55 @@ ${BUILD_URL}
     }
 
 }
+==============================================================================================================
+
+Checkout
+↓
+
+Compile
+
+↓
+
+Unit Test
+
+↓
+
+Parallel
+
+Gitleaks
+
+Trivy FS
+
+Checkov
+
+↓
+
+Sonar
+
+↓
+
+Quality Gate
+
+↓
+
+Package
+
+↓
+
+Publish Nexus
+
+↓
+
+Docker Build
+
+↓
+
+Parallel
+
+Trivy Image
+
+SBOM
+
+↓
+
+Push ECR
