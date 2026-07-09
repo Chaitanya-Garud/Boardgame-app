@@ -1,0 +1,367 @@
+pipeline {
+
+    agent any
+
+    options {
+
+        timestamps()
+
+        ansiColor('xterm')
+
+        disableConcurrentBuilds()
+
+        timeout(time:30, unit:'MINUTES')
+
+        buildDiscarder(logRotator(numToKeepStr:'20'))
+
+    }
+
+    parameters {
+
+        string(
+
+            name: 'IMAGE_TAG',
+
+            defaultValue: '',
+
+            description: 'Docker Image Tag From ECR'
+
+        )
+
+    }
+
+    environment {
+
+        APP_NAME="boardgame"
+
+        AWS_ACCOUNT="123456789012"
+
+        AWS_REGION="ap-south-1"
+
+        ECR_REPO="boardgame"
+
+        EKS_CLUSTER="dev-eks"
+
+        NAMESPACE="boardgame-dev"
+
+        HELM_RELEASE="boardgame"
+
+    }
+
+    stages {
+
+        stage('Validate Parameter') {
+
+            steps {
+
+                script {
+
+                    if(!params.IMAGE_TAG?.trim()){
+
+                        error("IMAGE_TAG cannot be empty")
+
+                    }
+
+                }
+
+            }
+
+        }
+
+        stage('Authenticate AWS') {
+
+            steps {
+
+                withAWS(
+
+                    credentials:'aws-dev',
+
+                    region:"${AWS_REGION}"
+
+                ){
+
+                    sh '''
+
+                    aws sts get-caller-identity
+
+                    '''
+
+                }
+
+            }
+
+        }
+
+        stage('Configure EKS') {
+
+            steps {
+
+                sh """
+
+aws eks update-kubeconfig \
+
+--region ${AWS_REGION} \
+
+--name ${EKS_CLUSTER}
+
+"""
+
+            }
+
+        }
+
+        stage('Verify Cluster') {
+
+            steps {
+
+                sh '''
+
+kubectl cluster-info
+
+kubectl get nodes
+
+kubectl get ns
+
+'''
+
+            }
+
+        }
+
+        stage('Verify Namespace') {
+
+            steps {
+
+                sh """
+
+kubectl get ns ${NAMESPACE} ||
+
+kubectl create ns ${NAMESPACE}
+
+"""
+
+            }
+
+        }
+
+        stage('Helm Lint') {
+
+            steps {
+
+                sh '''
+
+helm lint helm/
+
+'''
+
+            }
+
+        }
+
+        stage('Validate Helm') {
+
+            steps {
+
+                sh """
+
+helm template ${HELM_RELEASE} \
+
+helm/ \
+
+-f helm/values-dev.yaml
+
+"""
+
+            }
+
+        }
+                    stage('Deploy Application') {
+
+            steps {
+
+                sh """
+
+helm upgrade --install ${HELM_RELEASE} helm/ \
+
+--namespace ${NAMESPACE} \
+
+--create-namespace \
+
+-f helm/values-dev.yaml \
+
+--set image.repository=${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO} \
+
+--set image.tag=${params.IMAGE_TAG}
+
+"""
+
+            }
+
+        }
+
+        stage('Wait For Rollout') {
+
+            steps {
+
+                sh """
+
+kubectl rollout status deployment/${APP_NAME} \
+
+-n ${NAMESPACE} \
+
+--timeout=300s
+
+"""
+
+            }
+
+        }
+
+        stage('Verify Pods') {
+
+            steps {
+
+                sh """
+
+kubectl get pods -n ${NAMESPACE}
+
+kubectl describe deployment ${APP_NAME} -n ${NAMESPACE}
+
+"""
+
+            }
+
+        }
+
+        stage('Verify Services') {
+
+            steps {
+
+                sh """
+
+kubectl get svc -n ${NAMESPACE}
+
+kubectl get ingress -n ${NAMESPACE}
+
+"""
+
+            }
+
+        }
+
+        stage('Smoke Test') {
+
+            steps {
+
+                sh """
+
+curl --fail \
+
+http://boardgame-dev.company.internal/actuator/health
+
+"""
+
+            }
+
+        }
+
+    }
+
+    post {
+
+        success {
+
+            emailext(
+
+                subject:"DEV Deployment Successful : ${BUILD_NUMBER}",
+
+                body:"Image ${params.IMAGE_TAG} deployed successfully to DEV.\n${BUILD_URL}",
+
+                to:"devops@company.com"
+
+            )
+
+        }
+
+        failure {
+
+            script{
+
+                sh '''
+
+helm rollback boardgame || true
+
+'''
+
+            }
+
+            emailext(
+
+                subject:"DEV Deployment Failed : ${BUILD_NUMBER}",
+
+                body:"Deployment Failed\n${BUILD_URL}",
+
+                to:"devops@company.com"
+
+            )
+
+        }
+
+        always{
+
+            cleanWs()
+
+        }
+
+    }
+
+}
+
+
+
+==================================================================================================================
+Select Image Tag
+
+↓
+
+Authenticate AWS
+
+↓
+
+Update kubeconfig
+
+↓
+
+Verify Cluster
+
+↓
+
+Helm Lint
+
+↓
+
+Validate Helm
+
+↓
+
+Deploy using Helm
+
+↓
+
+Rollout Status
+
+↓
+
+Verify Pods
+
+↓
+
+Verify Services
+
+↓
+
+Smoke Test
+
+↓
+
+Notify Dev Team
